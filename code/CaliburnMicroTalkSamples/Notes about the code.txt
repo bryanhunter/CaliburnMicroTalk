@@ -1,0 +1,13 @@
+The solution is broken into several solution folders:
+
+1) The “Caliburn.Micro” solution folder contains the full source for Caliburn.Micro broken into three projects: one targeting Silverlight, another Windows Phone 7 and the third WPF.  
+
+In my real applications I include the Caliburn.Micro source and take a project reference. The codebase code is small, and comes in handy to see exactly what Caliburn.Micro is doing on your behalf.
+
+2) The “GameLibrary” solution folder contains the source for a rich sample app that excercises many of Caliburn.Micros features. Rob Eisenberg built the original GameLibrary sample for his MIX10 talk “Build your own MVVM framework” (*) as a way of showing off some of Caliburn’s neatest features in a small, easy-to-digest codebase. The talk and the mini-framework were well received. The GameLibrary’s framework namespace became the seed for Caliburn.Micro. After Caliburn.Micro was released Marco Amendola ported the original GameLibrary to Caliburn.Micro and released it in his fork of Caliburn.Micro (**). Great recursive story! The “GameLibrary” in this solution is based on Marco’s port.
+* Rob’s excellent MIX10 talk http://live.visitmix.com/MIX10/Sessions/EX15
+** “GameLibrary” branch of https://hg01.codeplex.com/forks/marcoamendola/caliburnmicromarcoamendolafork
+
+3) The “One trick ponies” solution folder includes samples that demonstrate one concept.
+
+4) The “WP7 Proofs” solution folder includes a Windows Phone 7 project that Rob Eisenberg wrote to demonstrate the WP7 Tombstoning/Resurrection features of Caliburn.Micro.

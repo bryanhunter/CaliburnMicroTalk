@@ -1,0 +1,40 @@
+﻿<UserControl x:Class="BasicConfigurationActionsAndConventions.Views.ShellView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             mc:Ignorable="d"
+             d:DesignHeight="300"
+             d:DesignWidth="300">
+	<UserControl.Resources>
+		<Style TargetType="GroupBox">
+			<Setter Property="Margin"
+			        Value="10">
+			</Setter>
+			<Setter Property="Padding"
+			        Value="10">
+			</Setter>
+		</Style>
+	</UserControl.Resources>
+	<StackPanel>
+		<GroupBox Header="Say Hello">
+			<StackPanel>
+				<TextBlock Text="Who are you?"></TextBlock>
+				<TextBox x:Name="Name" />
+				<Button x:Name="SayHello"
+				        Content="Greetings" />
+			</StackPanel>
+		</GroupBox>
+
+        <Button x:Name="LoadSecondContainer">Load a second ViewModel</Button>
+        <Button x:Name="UnloadSecondContainer">Unload a second ViewModel</Button>
+
+        <ContentControl x:Name="SecondContainer"></ContentControl>
+
+        <Button x:Name="LoadPanel">A panel-derived container with a ViewModel</Button>
+        <StackPanel x:Name="PanelBasedContainer">
+            
+        </StackPanel>
+
+    </StackPanel>
+</UserControl>
