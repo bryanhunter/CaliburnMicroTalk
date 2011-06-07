@@ -7,9 +7,6 @@
              d:DesignHeight="300"
              d:DesignWidth="300">
 	<StackPanel>
-		<Button x:Name="SayHello"
-		        Content="Click Me" />
-
 		<ContentControl x:Name="ActiveView"></ContentControl>
 	</StackPanel>
 </UserControl>

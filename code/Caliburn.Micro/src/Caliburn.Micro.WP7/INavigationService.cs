@@ -4,6 +4,7 @@
     using System.Windows;
     using System.Windows.Controls;
     using System.Windows.Navigation;
+    using Microsoft.Phone.Controls;
 
     /// <summary>
     /// Implemented by services that provide <see cref="Uri"/> based navigation.
@@ -29,6 +30,11 @@
         /// The current <see cref="Uri"/> source.
         /// </summary>
         Uri CurrentSource { get; }
+
+		/// <summary>
+		/// The current content.
+		/// </summary>
+		object CurrentContent { get; }
 
         /// <summary>
         /// Stops the loading process.
@@ -77,16 +83,19 @@
     public class FrameAdapter : INavigationService
     {
         readonly Frame frame;
+        readonly bool treatViewAsLoaded;
 
         /// <summary>
         /// Creates an instance of <see cref="FrameAdapter"/>
         /// </summary>
         /// <param name="frame">The frame to represent as a <see cref="INavigationService"/>.</param>
-        public FrameAdapter(Frame frame)
+        /// <param name="treatViewAsLoaded">Tells the frame adapter to assume that the view has already been loaded by the time OnNavigated is called. This is necessary when using the TransitionFrame.</param>
+        public FrameAdapter(Frame frame, bool treatViewAsLoaded = false)
         {
             this.frame = frame;
-            this.frame.Navigated += OnNavigated;
+            this.treatViewAsLoaded = treatViewAsLoaded;
             this.frame.Navigating += OnNavigating;
+            this.frame.Navigated += OnNavigated;
         }
 
         /// <summary>
@@ -94,30 +103,27 @@
         /// </summary>
         /// <param name="sender">The event sender.</param>
         /// <param name="e">The event args.</param>
-        protected virtual void OnNavigating(object sender, NavigatingCancelEventArgs e)
-        {
+        protected virtual void OnNavigating(object sender, NavigatingCancelEventArgs e) {
             var fe = frame.Content as FrameworkElement;
-            if (fe == null)
+            if(fe == null)
                 return;
 
             var guard = fe.DataContext as IGuardClose;
-            if(guard != null && !e.Uri.IsAbsoluteUri)
-            {
+            if(guard != null && !e.Uri.IsAbsoluteUri) {
                 bool shouldCancel = false;
-                guard.CanClose(result =>{
+                guard.CanClose(result => {
                     shouldCancel = !result;
                 });
 
-                if(shouldCancel)
-                {
+                if(shouldCancel) {
                     e.Cancel = true;
                     return;
                 }
             }
 
             var deactivator = fe.DataContext as IDeactivate;
-            if (deactivator != null)
-                deactivator.Deactivate(e.Uri.IsAbsoluteUri);
+            if(deactivator != null)
+                deactivator.Deactivate(false);
         }
 
         /// <summary>
@@ -125,46 +131,54 @@
         /// </summary>
         /// <param name="sender">The event sender.</param>
         /// <param name="e">The event args.</param>
-        protected virtual void OnNavigated(object sender, NavigationEventArgs e)
-        {
-            if (e.Uri.IsAbsoluteUri)
+        protected virtual void OnNavigated(object sender, NavigationEventArgs e) {
+            if(e.Uri.IsAbsoluteUri || e.Content == null)
                 return;
 
             ViewLocator.InitializeComponent(e.Content);
 
             var viewModel = ViewModelLocator.LocateForView(e.Content);
-            if (viewModel == null)
+            if(viewModel == null)
                 return;
 
-            ViewModelBinder.Bind(viewModel, (DependencyObject)e.Content, null);
+            var page = e.Content as PhoneApplicationPage;
+            if(page == null)
+                throw new ArgumentException("View '" + e.Content.GetType().FullName + "' should inherit from PhoneApplicationPage or one of its descendents.");
 
-            TryInjectQueryString(viewModel, e.Content);
+            if(treatViewAsLoaded)
+                page.SetValue(View.IsLoadedProperty, true);
+
+            ViewModelBinder.Bind(viewModel, page, null);
+
+            TryInjectQueryString(viewModel, page);
 
             var activator = viewModel as IActivate;
-            if (activator != null)
+            if(activator != null)
                 activator.Activate();
+
+            GC.Collect();
         }
 
         /// <summary>
         /// Attempts to inject query string parameters from the view into the view model.
         /// </summary>
         /// <param name="viewModel">The view model.</param>
-        /// <param name="view">The view.</param>
-        protected virtual void TryInjectQueryString(object viewModel, object view) 
+        /// <param name="page">The page.</param>
+        protected virtual void TryInjectQueryString(object viewModel, Page page) 
         {
-            var page = view as Page;
-            if (page == null)
-                return;
-
             var viewModelType = viewModel.GetType();
 
             foreach(var pair in page.NavigationContext.QueryString)
             {
-                var property = viewModelType.GetProperty(pair.Key);
+                var property = viewModelType.GetPropertyCaseInsensitive(pair.Key);
                 if(property == null)
                     continue;
 
-                property.SetValue(viewModel, MessageBinder.CoerceValue(property.PropertyType, pair.Value), null);
+                property.SetValue(
+                    viewModel, 
+                    MessageBinder.CoerceValue(property.PropertyType, pair.Value, page.NavigationContext), 
+                    null
+                    );
             }
         }
 
@@ -200,6 +214,15 @@
         {
             get { return frame.CurrentSource; }
         }
+
+		/// <summary>
+		/// The current content.
+		/// </summary>
+		public object CurrentContent
+		{
+			get { return frame.Content; }
+		}
+
 
         /// <summary>
         /// Stops the loading process.

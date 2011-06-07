@@ -25,16 +25,14 @@
     public class DefaultCloseStrategy<T> : ICloseStrategy<T>
     {
         List<T> closable;
-        IEnumerator<T> enumerator;
         bool finalResult;
-        Action<bool, IEnumerable<T>> callback;
         readonly bool closeConductedItemsWhenConductorCannotClose;
 
         /// <summary>
         /// Creates an instance of the class.
         /// </summary>
-        /// <param name="closeConductedItemsWhenConductorCannotClose">Indicates that even if all conducted items are not closable, those that are should be closed. The default is true.</param>
-        public DefaultCloseStrategy(bool closeConductedItemsWhenConductorCannotClose = true) {
+        /// <param name="closeConductedItemsWhenConductorCannotClose">Indicates that even if all conducted items are not closable, those that are should be closed. The default is FALSE.</param>
+        public DefaultCloseStrategy(bool closeConductedItemsWhenConductorCannotClose = false) {
             this.closeConductedItemsWhenConductorCannotClose = closeConductedItemsWhenConductorCannotClose;
         }
 
@@ -46,15 +44,13 @@
         /// The bool indicates whether close can occur. The enumerable indicates which children should close if the parent cannot.</param>
         public void Execute(IEnumerable<T> toClose, Action<bool, IEnumerable<T>> callback)
         {
-            enumerator = toClose.GetEnumerator();
-            this.callback = callback;
             finalResult = true;
             closable = new List<T>();
 
-            Evaluate(true);
+            Evaluate(true, toClose.GetEnumerator(), callback);
         }
 
-        void Evaluate(bool result)
+        void Evaluate(bool result, IEnumerator<T> enumerator, Action<bool, IEnumerable<T>> callback)
         {
             finalResult = finalResult && result;
 
@@ -73,13 +69,13 @@
                         if(canClose)
                             closable.Add(current);
 
-                        Evaluate(canClose);
+                        Evaluate(canClose, enumerator, callback);
                     });
                 }
                 else
                 {
                     closable.Add(current);
-                    Evaluate(true);
+                    Evaluate(true, enumerator, callback);
                 }
             }
         }

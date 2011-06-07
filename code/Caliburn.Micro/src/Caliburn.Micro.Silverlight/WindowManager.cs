@@ -1,9 +1,11 @@
 ﻿namespace Caliburn.Micro
 {
     using System;
+    using System.Collections.Generic;
     using System.ComponentModel;
     using System.Windows;
     using System.Windows.Controls;
+    using System.Windows.Controls.Primitives;
     using System.Windows.Data;
 
     /// <summary>
@@ -17,6 +19,22 @@
         /// <param name="rootModel">The root model.</param>
         /// <param name="context">The context.</param>
         void ShowDialog(object rootModel, object context = null);
+
+        /// <summary>
+        /// Shows a toast notification for the specified model.
+        /// </summary>
+        /// <param name="rootModel">The root model.</param>
+        /// <param name="durationInMilliseconds">How long the notification should appear for.</param>
+        /// <param name="context">The context.</param>
+        void ShowNotification(object rootModel, int durationInMilliseconds, object context = null);
+
+        /// <summary>
+        /// Shows a popup at the current mouse position.
+        /// </summary>
+        /// <param name="rootModel">The root model.</param>
+        /// <param name="context">The view context.</param>
+        /// <param name="settings">The optional popup settings.</param>
+        void ShowPopup(object rootModel, object context = null, IDictionary<string, object> settings = null);
     }
 
     /// <summary>
@@ -24,38 +42,12 @@
     /// </summary>
     public class WindowManager : IWindowManager
     {
-        static readonly DependencyProperty IsElementGeneratedProperty =
-            DependencyProperty.RegisterAttached(
-                "IsElementGenerated",
-                typeof(bool),
-                typeof(WindowManager),
-                new PropertyMetadata(false, null)
-                );
-
-        /// <summary>
-        /// Used to retrieve the root, non-framework-created view.
-        /// </summary>
-        /// <param name="view">The view to search.</param>
-        /// <returns>The root element that was not created by the framework.</returns>
-        /// <remarks>In certain instances the WindowManager creates UI elements in order to display windows.
-        /// For example, if you ask the window manager to show a UserControl as a dialog, it creates a window to host the UserControl in.
-        /// The WindowManager marks that element as a framework-created element so that it can determine what it created vs. what was intended by the developer.
-        /// Calling GetSignificantView allows the framework to discover what the original element was. 
-        /// </remarks>
-        public static DependencyObject GetSignificantView(DependencyObject view)
-        {
-            if((bool)view.GetValue(IsElementGeneratedProperty))
-                return (DependencyObject)((ContentControl)view).Content;
-
-            return view;
-        }
-
         /// <summary>
         /// Shows a modal dialog for the specified model.
         /// </summary>
         /// <param name="rootModel">The root model.</param>
         /// <param name="context">The context.</param>
-        public void ShowDialog(object rootModel, object context = null)
+        public virtual void ShowDialog(object rootModel, object context = null)
         {
             var view = EnsureWindow(rootModel, ViewLocator.LocateForModel(rootModel, null, context));
             ViewModelBinder.Bind(rootModel, view, context);
@@ -72,14 +64,101 @@
             view.Show();
         }
 
-        static ChildWindow EnsureWindow(object model, object view)
+        /// <summary>
+        /// Shows a toast notification for the specified model.
+        /// </summary>
+        /// <param name="rootModel">The root model.</param>
+        /// <param name="durationInMilliseconds">How long the notification should appear for.</param>
+        /// <param name="context">The context.</param>
+        public virtual void ShowNotification(object rootModel, int durationInMilliseconds, object context = null)
+        {
+            var window = new NotificationWindow();
+            var view = ViewLocator.LocateForModel(rootModel, window, context);
+
+            ViewModelBinder.Bind(rootModel, view, null);
+            window.Content = (FrameworkElement)view;
+
+            var activator = rootModel as IActivate;
+            if (activator != null)
+                activator.Activate();
+
+            var deactivator = rootModel as IDeactivate;
+            if(deactivator != null)
+                window.Closed += delegate { deactivator.Deactivate(true); };
+
+            window.Show(durationInMilliseconds);
+        }
+
+        /// <summary>
+        /// Shows a popup at the current mouse position.
+        /// </summary>
+        /// <param name="rootModel">The root model.</param>
+        /// <param name="context">The view context.</param>
+        /// <param name="settings">The optional popup settings.</param>
+        public virtual void ShowPopup(object rootModel, object context = null, IDictionary<string, object> settings = null)
+        {
+            var popup = CreatePopup(rootModel, settings);
+            var view = ViewLocator.LocateForModel(rootModel, popup, context);
+
+            popup.Child = view;
+            popup.SetValue(View.IsGeneratedProperty, true);
+
+            ViewModelBinder.Bind(rootModel, popup, null);
+
+            var activatable = rootModel as IActivate;
+            if (activatable != null)
+                activatable.Activate();
+
+            var deactivator = rootModel as IDeactivate;
+            if (deactivator != null)
+                popup.Closed += delegate { deactivator.Deactivate(true); };
+
+            popup.IsOpen = true;
+            popup.CaptureMouse();
+        }
+
+        /// <summary>
+        /// Creates a popup for hosting a popup window.
+        /// </summary>
+        /// <param name="rootModel">The model.</param>
+        /// <param name="settings">The optional popup settings.</param>
+        /// <returns>The popup.</returns>
+        protected virtual Popup CreatePopup(object rootModel, IDictionary<string, object> settings)
+        {
+            var popup = new Popup {
+                HorizontalOffset = Mouse.Position.X,
+                VerticalOffset = Mouse.Position.Y
+            };
+
+            if (settings != null) {
+                var type = popup.GetType();
+
+                foreach (var pair in settings)
+                {
+                    var propertyInfo = type.GetProperty(pair.Key);
+
+                    if(propertyInfo != null)
+                        propertyInfo.SetValue(popup, pair.Value, null);
+                }
+            }
+
+            return popup;
+        }
+
+        /// <summary>
+        /// Ensures that the view is a <see cref="ChildWindow"/> or is wrapped by one.
+        /// </summary>
+        /// <param name="model">The view model.</param>
+        /// <param name="view">The view.</param>
+        /// <returns>The window.</returns>
+        protected virtual ChildWindow EnsureWindow(object model, object view)
         {
             var window = view as ChildWindow;
 
             if(window == null)
             {
                 window = new ChildWindow { Content = view };
-                window.SetValue(IsElementGeneratedProperty, true);
+                window.SetValue(View.IsGeneratedProperty, true);
             }
 
             return window;
@@ -126,9 +205,12 @@
             }
 
             void Deactivated(object sender, DeactivationEventArgs e) {
+                if(!e.WasClosed)
+                    return;
+
                 ((IDeactivate)model).Deactivated -= Deactivated;
 
-                if(!e.WasClosed || deactivatingFromView)
+                if (deactivatingFromView)
                     return;
 
                 deactivateFromViewModel = true;
@@ -139,6 +221,9 @@
             }
 
             void Closing(object sender, CancelEventArgs e) {
+                if (e.Cancel)
+                    return;
+
                 var guard = (IGuardClose)model;
 
                 if (actuallyClosing)
@@ -150,13 +235,15 @@
                 bool runningAsync = false, shouldEnd = false;
 
                 guard.CanClose(canClose => {
-                    if(runningAsync && canClose) {
-                        actuallyClosing = true;
-                        view.Close();
-                    }
-                    else e.Cancel = !canClose;
+                    Execute.OnUIThread(() => {
+                        if(runningAsync && canClose) {
+                            actuallyClosing = true;
+                            view.Close();
+                        }
+                        else e.Cancel = !canClose;
 
-                    shouldEnd = true;
+                        shouldEnd = true;
+                    });
                 });
 
                 if (shouldEnd)

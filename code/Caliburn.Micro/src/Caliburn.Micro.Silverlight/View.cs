@@ -1,20 +1,40 @@
 ﻿namespace Caliburn.Micro
 {
+    using System;
     using System.Linq;
     using System.Windows;
+    using System.Windows.Controls;
     using System.Windows.Markup;
 
     /// <summary>
     /// Hosts attached properties related to view models.
     /// </summary>
-    public static class View
-    {
+    public static class View {
+        static readonly ILog Log = LogManager.GetLog(typeof(View));
+        static readonly ContentPropertyAttribute DefaultContentProperty = new ContentPropertyAttribute("Content");
+
+        /// <summary>
+        /// The default view context.
+        /// </summary>
+        public static readonly object DefaultContext = new object();
+
         /// <summary>
         /// A dependency property which allows the framework to track whether a certain element has already been loaded in certain scenarios.
         /// </summary>
         public static readonly DependencyProperty IsLoadedProperty =
             DependencyProperty.RegisterAttached(
                 "IsLoaded",
+                typeof(bool),
+                typeof(View),
+                new PropertyMetadata(false)
+                );
+
+        /// <summary>
+        /// A dependency property which marks an element as a name scope root.
+        /// </summary>
+        public static readonly DependencyProperty IsScopeRootProperty =
+            DependencyProperty.RegisterAttached(
+                "IsScopeRoot",
                 typeof(bool),
                 typeof(View),
                 new PropertyMetadata(false)
@@ -32,6 +52,17 @@
                 );
 
         /// <summary>
+        /// A dependency property for assigning a context to a particular portion of the UI.
+        /// </summary>
+        public static readonly DependencyProperty ContextProperty =
+            DependencyProperty.RegisterAttached(
+                "Context",
+                typeof(object),
+                typeof(View),
+                new PropertyMetadata(OnContextChanged)
+                );
+
+        /// <summary>
         /// A dependency property for attaching a model to the UI.
         /// </summary>
         public static DependencyProperty ModelProperty =
@@ -43,15 +74,76 @@
                 );
 
         /// <summary>
-        /// A dependency property for assigning a context to a particular portion of the UI.
+        /// Used by the framework to indicate that this element was generated.
         /// </summary>
-        public static readonly DependencyProperty ContextProperty =
+        public static readonly DependencyProperty IsGeneratedProperty =
             DependencyProperty.RegisterAttached(
-                "Context",
-                typeof(object),
+                "IsGenerated",
+                typeof(bool),
                 typeof(View),
-                new PropertyMetadata(OnContextChanged)
+                new PropertyMetadata(false, null)
                 );
+
+        /// <summary>
+        /// Executes the handler immediately if the element is loaded, otherwise wires it to the Loaded event.
+        /// </summary>
+        /// <param name="element">The element.</param>
+        /// <param name="handler">The handler.</param>
+        /// <returns>true if the handler was executed immediately; false otherwise</returns>
+        public static bool ExecuteOnLoad(FrameworkElement element, RoutedEventHandler handler) {
+#if SILVERLIGHT
+            if((bool)element.GetValue(IsLoadedProperty))
+#else
+            if(element.IsLoaded)
+#endif
+            {
+                handler(element, new RoutedEventArgs());
+                return true;
+            }
+            else {
+                RoutedEventHandler loaded = null;
+                loaded = (s, e) => {
+#if SILVERLIGHT
+                    element.SetValue(IsLoadedProperty, true);
+#endif
+                    handler(s, e);
+                    element.Loaded -= loaded;
+                };
+
+                element.Loaded += loaded;
+                return false;
+            }
+        }
+
+        /// <summary>
+        /// Used to retrieve the root, non-framework-created view.
+        /// </summary>
+        /// <param name="view">The view to search.</param>
+        /// <returns>The root element that was not created by the framework.</returns>
+        /// <remarks>In certain instances the services create UI elements.
+        /// For example, if you ask the window manager to show a UserControl as a dialog, it creates a window to host the UserControl in.
+        /// The WindowManager marks that element as a framework-created element so that it can determine what it created vs. what was intended by the developer.
+        /// Calling GetFirstNonGeneratedView allows the framework to discover what the original element was. 
+        /// </remarks>
+        public static Func<object, object> GetFirstNonGeneratedView = view => {
+            var dependencyObject = view as DependencyObject;
+            if(dependencyObject == null)
+                return view;
+
+            if((bool)dependencyObject.GetValue(IsGeneratedProperty)) {
+                if(dependencyObject is ContentControl)
+                    return ((ContentControl)dependencyObject).Content;
+
+                var type = dependencyObject.GetType();
+                var contentProperty = type.GetAttributes<ContentPropertyAttribute>(true)
+                                          .FirstOrDefault() ?? DefaultContentProperty;
+
+                return type.GetProperty(contentProperty.Name)
+                    .GetValue(dependencyObject, null);
+            }
+
+            return dependencyObject;
+        };
 
         /// <summary>
         /// Gets the convention application behavior.
@@ -123,8 +215,8 @@
                 var context = GetContext(targetLocation);
                 var view = ViewLocator.LocateForModel(args.NewValue, targetLocation, context);
 
-                ViewModelBinder.Bind(args.NewValue, view, context);
                 SetContentProperty(targetLocation, view);
+                ViewModelBinder.Bind(args.NewValue, view, context);
             }
             else SetContentProperty(targetLocation, args.NewValue);
         }
@@ -139,9 +231,9 @@
                 return;
 
             var view = ViewLocator.LocateForModel(model, targetLocation, e.NewValue);
-            ViewModelBinder.Bind(model, view, e.NewValue);
 
             SetContentProperty(targetLocation, view);
+            ViewModelBinder.Bind(model, view, e.NewValue);
         }
 
         private static void SetContentProperty(object targetLocation, object view)
@@ -155,12 +247,17 @@
 
         private static void SetContentPropertyCore(object targetLocation, object view)
         {
-            var type = targetLocation.GetType();
-            var contentProperty = type.GetAttributes<ContentPropertyAttribute>(true)
-                .FirstOrDefault() ?? new ContentPropertyAttribute("Content");
+            try {
+                var type = targetLocation.GetType();
+                var contentProperty = type.GetAttributes<ContentPropertyAttribute>(true)
+                    .FirstOrDefault() ?? DefaultContentProperty;
 
-            type.GetProperty(contentProperty.Name)
-                .SetValue(targetLocation, view, null);
+                type.GetProperty(contentProperty.Name)
+                    .SetValue(targetLocation, view, null);
+            }
+            catch(Exception e) {
+                Log.Error(e);
+            }
         }
     }
 }

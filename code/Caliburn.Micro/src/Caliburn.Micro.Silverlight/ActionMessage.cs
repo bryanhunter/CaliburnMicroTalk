@@ -13,15 +13,16 @@ namespace Caliburn.Micro
     using System.Windows.Interactivity;
     using System.Windows.Markup;
     using System.Windows.Media;
+    using EventTrigger = System.Windows.Interactivity.EventTrigger;
 
     /// <summary>
     /// Used to send a message from the UI to a presentation model class, indicating that a particular Action should be invoked.
     /// </summary>
-    [DefaultTrigger(typeof(FrameworkElement), typeof(System.Windows.Interactivity.EventTrigger), "MouseLeftButtonDown")]
-    [DefaultTrigger(typeof(ButtonBase), typeof(System.Windows.Interactivity.EventTrigger), "Click")] 
+    [DefaultTrigger(typeof(FrameworkElement), typeof(EventTrigger), "MouseLeftButtonDown")]
+    [DefaultTrigger(typeof(ButtonBase), typeof(EventTrigger), "Click")] 
     [ContentProperty("Parameters")]
     [TypeConstraint(typeof(FrameworkElement))]
-    public class ActionMessage : TriggerAction<FrameworkElement>
+    public class ActionMessage : TriggerAction<FrameworkElement>, IHaveParameters
     {
         static readonly ILog Log = LogManager.GetLog(typeof(ActionMessage));
 
@@ -31,6 +32,18 @@ namespace Caliburn.Micro
             typeof(ActionMessage),
             new PropertyMetadata(HandlerPropertyChanged)
             );
+
+        ///<summary>
+        /// Causes the action invocation to "double check" if the action should be invoked by executing the guard immediately before hand.
+        ///</summary>
+        /// <remarks>This is disabled by default. If multiple actions are attached to the same element, you may want to enable this so that each individaul action checks its guard regardless of how the UI state appears.</remarks>
+        public static bool EnforceGuardsDuringInvocation = false;
+
+        ///<summary>
+        /// Causes the action to throw if it cannot locate the target or the method at invocation time.
+        ///</summary>
+        /// <remarks>True by default.</remarks>
+        public static bool ThrowsExceptions = true;
 
         /// <summary>
         /// Represents the method name of an action message.
@@ -95,6 +108,9 @@ namespace Caliburn.Micro
         /// </summary>
         public event EventHandler Detaching = delegate { };
 
+        /// <summary>
+        /// Called after the action is attached to an AssociatedObject.
+        /// </summary>
         protected override void OnAttached()
         {
             if (!Bootstrapper.IsInDesignMode)
@@ -102,9 +118,12 @@ namespace Caliburn.Micro
                 Parameters.Attach(AssociatedObject);
                 Parameters.Apply(x => x.MakeAwareOf(this));
 
-                if((bool)AssociatedObject.GetValue(View.IsLoadedProperty))
-                    ElementLoaded(null, null);
-                else AssociatedObject.Loaded += ElementLoaded;
+                if(View.ExecuteOnLoad(AssociatedObject, ElementLoaded)) {
+                    var trigger = Interaction.GetTriggers(AssociatedObject)
+                        .FirstOrDefault(t => t.Actions.Contains(this)) as EventTrigger;
+                    if(trigger != null && trigger.EventName == "Loaded")
+                        Invoke(new RoutedEventArgs());
+                }
             }
 
             base.OnAttached();
@@ -115,6 +134,9 @@ namespace Caliburn.Micro
             ((ActionMessage)d).UpdateContext();
         }
 
+        /// <summary>
+        /// Called when the action is being detached from its AssociatedObject, but before it has actually occurred.
+        /// </summary>
         protected override void OnDetaching()
         {
             if (!Bootstrapper.IsInDesignMode)
@@ -162,6 +184,9 @@ namespace Caliburn.Micro
 
         void UpdateContext()
         {
+            if (context != null)
+                context.Dispose();
+
             context = new ActionExecutionContext {
                 Message = this, 
                 Source = AssociatedObject
@@ -171,8 +196,15 @@ namespace Caliburn.Micro
             UpdateAvailabilityCore();
         }
 
+        /// <summary>
+        /// Invokes the action.
+        /// </summary>
+        /// <param name="eventArgs">The parameter to the action. If the action does not require a parameter, the parameter may be set to a null reference.</param>
         protected override void Invoke(object eventArgs) {
             Log.Info("Invoking {0}.", this);
+
+            if(context == null)
+                UpdateContext();
 
             if(context.Target == null || context.View == null) {
                 PrepareContext(context);
@@ -180,6 +212,9 @@ namespace Caliburn.Micro
                 {
                     var ex = new Exception(string.Format("No target found for method {0}.", context.Message.MethodName));
                     Log.Error(ex);
+
+                    if (!ThrowsExceptions)
+                        return;
                     throw ex;
                 }
                 if (!UpdateAvailabilityCore())
@@ -188,14 +223,21 @@ namespace Caliburn.Micro
 
             if (context.Method == null)
             {
-                var ex = new Exception(string.Format("Method {0} not found on target of type {1}.",
-                    context.Message.MethodName, context.Target.GetType()));
+                var ex = new Exception(string.Format("Method {0} not found on target of type {1}.", context.Message.MethodName, context.Target.GetType()));
                 Log.Error(ex);
+
+                if (!ThrowsExceptions)
+                    return;
                 throw ex;
             }
 
             context.EventArgs = eventArgs;
+
+            if (EnforceGuardsDuringInvocation && context.CanExecute != null && !context.CanExecute())
+                return;
+
             InvokeAction(context);
+            context.EventArgs = null;
         }
 
         /// <summary>
@@ -235,13 +277,15 @@ namespace Caliburn.Micro
             var values = MessageBinder.DetermineParameters(context, context.Method.GetParameters());
             var returnValue = context.Method.Invoke(context.Target, values);
 
-            if (returnValue is IResult)
-                returnValue = new[] { returnValue as IResult };
+            var result = returnValue as IResult;
+            if (result != null)
+                returnValue = new[] { result };
 
-            if (returnValue is IEnumerable<IResult>)
-                Coroutine.Execute(((IEnumerable<IResult>)returnValue).GetEnumerator(), context);
+            var enumerable = returnValue as IEnumerable<IResult>;
+            if(enumerable != null)
+                Coroutine.BeginExecute(enumerable.GetEnumerator(), context);
             else if (returnValue is IEnumerator<IResult>)
-                Coroutine.Execute(((IEnumerator<IResult>)returnValue), context);
+                Coroutine.BeginExecute((IEnumerator<IResult>)returnValue, context);
         };
 
         /// <summary>
@@ -270,8 +314,12 @@ namespace Caliburn.Micro
 
 #if SILVERLIGHT
             var source = (Control)context.Source;
+            if (ConventionManager.HasBinding(source, Control.IsEnabledProperty))
+                return source.IsEnabled;
 #else
             var source = context.Source;
+            if (ConventionManager.HasBinding(source, UIElement.IsEnabledProperty))
+                return source.IsEnabled;
 #endif
             if (context.CanExecute != null) 
                 source.IsEnabled = context.CanExecute();
@@ -342,7 +390,7 @@ namespace Caliburn.Micro
 
             var guardName = "Can" + context.Method.Name;
             var targetType = context.Target.GetType();
-            var guard = targetType.GetMethod(guardName);
+            var guard = TryFindGuardMethod(context);
 
             if(guard == null)
             {
@@ -354,12 +402,19 @@ namespace Caliburn.Micro
                 if(guard == null)
                     return;
 
-                PropertyChangedEventHandler handler = (s, e) =>{
-                    if(string.IsNullOrEmpty(e.PropertyName) || e.PropertyName == guardName)
+                PropertyChangedEventHandler handler = null;
+                handler = (s, e) => {
+                    if(string.IsNullOrEmpty(e.PropertyName) || e.PropertyName == guardName) {
+                        if(context.Message == null) {
+                            inpc.PropertyChanged -= handler;
+                            return;
+                        }
                         context.Message.UpdateAvailability();
+                    }
                 };
 
                 inpc.PropertyChanged += handler;
+                context.Disposing += delegate { inpc.PropertyChanged -= handler; };
                 context.Message.Detaching += delegate { inpc.PropertyChanged -= handler; };
             }
 
@@ -368,5 +423,37 @@ namespace Caliburn.Micro
                 MessageBinder.DetermineParameters(context, guard.GetParameters())
                 );
         };
+
+		/// <summary>
+		/// Try to find a candidate for guard function, having:
+		///		- a name in the form "CanXXX"
+		///		- no generic parameters
+		///		- a bool return type
+		///		- no parameters or a set of parameters corresponding to the action method
+		/// </summary>
+		/// <param name="context">The execution context</param>
+		/// <returns>A MethodInfo, if found; null otherwise</returns>
+		private static MethodInfo TryFindGuardMethod(ActionExecutionContext context) {
+			var guardName = "Can" + context.Method.Name;
+            var targetType = context.Target.GetType();
+            var guard = targetType.GetMethod(guardName);
+
+			if (guard ==null) return null;
+			if (guard.ContainsGenericParameters) return null;
+			if (!typeof(bool).Equals(guard.ReturnType)) return null;
+
+			var guardPars = guard.GetParameters();
+			var actionPars = context.Method.GetParameters();
+			if (guardPars.Length == 0) return guard;
+			if (guardPars.Length != actionPars.Length) return null;
+
+			var comparisons = guardPars.Zip(
+					context.Method.GetParameters(),
+					(x, y) => x.ParameterType.Equals(y.ParameterType)
+				);
+			if (comparisons.Any(x => !x)) return null;
+
+			return guard;
+		}
     }
 }

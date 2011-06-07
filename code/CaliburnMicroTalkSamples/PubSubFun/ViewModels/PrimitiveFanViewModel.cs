@@ -4,11 +4,14 @@ using PubSubFun.Messages;
 
 namespace PubSubFun.ViewModels
 {
-    public class PrimitiveFanViewModel : PropertyChangedBase, IHandle<CoolNumberNews>, IHandle<CoolStringNews>
+    public class PrimitiveFanViewModel : PropertyChangedBase, 
+        IHandle<CoolNumberNews>, 
+        IHandle<CoolStringNews>
     {
         public PrimitiveFanViewModel()
         {
-            IoC.Get<IEventAggregator>().Subscribe(this);
+            var eventAggregator = IoC.Get<IEventAggregator>();
+            eventAggregator.Subscribe(this);
         }
 
         public string TheNews { get; set; }

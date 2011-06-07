@@ -10,9 +10,5 @@ namespace CustomizingTheBootstrapperForMEF
         [Import(typeof (WidgetViewModel))]
         public object ActiveView { get; set; }
 
-        public void SayHello()
-        {
-            MessageBox.Show(string.Format("Hello there")); // Just for the sample. Not a great thing to do.
-        }
     }
 }

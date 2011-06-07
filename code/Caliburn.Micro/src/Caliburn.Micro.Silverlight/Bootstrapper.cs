@@ -2,6 +2,8 @@
 {
     using System;
     using System.Collections.Generic;
+    using System.ComponentModel;
+    using System.Diagnostics;
     using System.Reflection;
     using System.Windows;
     using System.Windows.Threading;
@@ -12,11 +14,12 @@
     public class Bootstrapper
     {
         private static bool? isInDesignMode;
+        readonly bool useApplication;
 
         /// <summary>
         /// The application.
         /// </summary>
-        public Application Application { get; private set; }
+        public Application Application { get; protected set; }
 
         /// <summary>
         /// Indicates whether or not the framework is in design-time mode.
@@ -27,11 +30,15 @@
             {
                 if (isInDesignMode == null)
                 {
-                    var app = Application.Current.ToString();
+#if SILVERLIGHT
+                    isInDesignMode = DesignerProperties.IsInDesignTool;
+#else
+                    var prop = DesignerProperties.IsInDesignModeProperty;
+                    isInDesignMode = (bool)DependencyPropertyDescriptor.FromProperty(prop, typeof(FrameworkElement)).Metadata.DefaultValue;
 
-                    if (app == "System.Windows.Application" || app == "Microsoft.Expression.Blend.BlendApplication")
+                    if (!isInDesignMode.GetValueOrDefault(false) && Process.GetCurrentProcess().ProcessName.StartsWith("devenv", StringComparison.Ordinal))
                         isInDesignMode = true;
-                    else isInDesignMode = false;
+#endif
                 }
 
                 return isInDesignMode.GetValueOrDefault(false);
@@ -41,16 +48,30 @@
         /// <summary>
         /// Creates an instance of the bootstrapper.
         /// </summary>
-        public Bootstrapper()
-        {
-            if(IsInDesignMode)
-                return;
+        public Bootstrapper(bool useApplication = true) {
+            this.useApplication = useApplication;
 
+            if (IsInDesignMode)
+                StartDesignTime();
+            else StartRuntime();
+        }
+
+        /// <summary>
+        /// Called by the bootstrapper's constructor at design time to start the framework.
+        /// </summary>
+        protected virtual void StartDesignTime() {}
+
+        /// <summary>
+        /// Called by the bootstrapper's constructor at runtime to start the framework.
+        /// </summary>
+        protected virtual void StartRuntime() {
             Execute.InitializeWithDispatcher();
             AssemblySource.Instance.AddRange(SelectAssemblies());
 
-            Application = Application.Current;
-            PrepareApplication();
+            if (useApplication) {
+                Application = Application.Current;
+                PrepareApplication();
+            }
 
             Configure();
             IoC.GetInstance = GetInstance;
@@ -122,12 +143,7 @@
         /// </summary>
         /// <param name="sender">The sender.</param>
         /// <param name="e">The args.</param>
-        protected virtual void OnStartup(object sender, StartupEventArgs e)
-        {
-#if !WP7
-            DisplayRootView();
-#endif
-        }
+        protected virtual void OnStartup(object sender, StartupEventArgs e) {}
 
         /// <summary>
         /// Override this to add custom behavior on exit.
@@ -135,13 +151,6 @@
         /// <param name="sender">The sender.</param>
         /// <param name="e">The event args.</param>
         protected virtual void OnExit(object sender, EventArgs e) { }
-
-#if !WP7
-        /// <summary>
-        /// Override to display your UI at startup.
-        /// </summary>
-        protected virtual void DisplayRootView() {}
-#endif
 
 #if SILVERLIGHT
         /// <summary>
@@ -158,31 +167,32 @@
         /// <param name="e">The event args.</param>
         protected virtual void OnUnhandledException(object sender, DispatcherUnhandledExceptionEventArgs e) { }
 #endif
-    }
-
-#if !WP7
-    /// <summary>
-    /// A strongly-typed version of <see cref="Bootstrapper"/> that specifies the type of root model to create for the application.
-    /// </summary>
-    /// <typeparam name="TRootModel">The type of root model for the application.</typeparam>
-    public class Bootstrapper<TRootModel> : Bootstrapper
-    {
+            
+#if SILVERLIGHT && !WP7
         /// <summary>
-        /// Override to display your UI at startup.
+        /// Locates the view model, locates the associate view, binds them and shows it as the root view.
         /// </summary>
-        protected override void DisplayRootView()
-        {
-            var viewModel = IoC.Get<TRootModel>();
-#if SILVERLIGHT
+        /// <param name="application">The application.</param>
+        /// <param name="viewModelType">The view model type.</param>
+        protected static void DisplayRootViewFor(Application application, Type viewModelType) {
+            var viewModel = IoC.GetInstance(viewModelType, null);
             var view = ViewLocator.LocateForModel(viewModel, null, null);
+
             ViewModelBinder.Bind(viewModel, view, null);
 
             var activator = viewModel as IActivate;
-            if (activator != null)
+            if(activator != null)
                 activator.Activate();
 
-            Application.RootVisual = view;
-#else
+            Mouse.Initialize(view);
+            application.RootVisual = view;
+        }
+#elif NET
+        /// <summary>
+        /// Locates the view model, locates the associate view, binds them and shows it as the root view.
+        /// </summary>
+        /// <param name="viewModelType">The view model type.</param>
+        protected static void DisplayRootViewFor(Type viewModelType) {
             IWindowManager windowManager;
 
             try
@@ -194,7 +204,28 @@
                 windowManager = new WindowManager();
             }
 
-            windowManager.Show(viewModel);
+            windowManager.ShowWindow(IoC.GetInstance(viewModelType, null));
+        }
+#endif
+    }
+
+#if !WP7
+    /// <summary>
+    /// A strongly-typed version of <see cref="Bootstrapper"/> that specifies the type of root model to create for the application.
+    /// </summary>
+    /// <typeparam name="TRootModel">The type of root model for the application.</typeparam>
+    public class Bootstrapper<TRootModel> : Bootstrapper {
+        /// <summary>
+        /// Override this to add custom behavior to execute after the application starts.
+        /// </summary>
+        /// <param name="sender">The sender.</param>
+        /// <param name="e">The args.</param>
+        protected override void OnStartup(object sender, StartupEventArgs e)
+        {
+#if SILVERLIGHT
+            DisplayRootViewFor(Application, typeof(TRootModel));
+#else
+            DisplayRootViewFor(typeof(TRootModel));
 #endif
         }
     }

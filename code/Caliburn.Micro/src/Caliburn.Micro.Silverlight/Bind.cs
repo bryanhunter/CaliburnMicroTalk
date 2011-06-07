@@ -47,20 +47,21 @@
             if (fe == null)
                 return;
 
-            RoutedEventHandler handler = null;
-            handler = delegate{
+            View.ExecuteOnLoad(fe, delegate {
                 var target = e.NewValue;
                 var containerKey = e.NewValue as string;
 
-                if (containerKey != null)
+                if(containerKey != null)
                     target = IoC.GetInstance(null, containerKey);
 
-                d.SetValue(View.IsLoadedProperty, true);
-                ViewModelBinder.Bind(target, d, null);
-                fe.Loaded -= handler;
-            };
+                d.SetValue(View.IsScopeRootProperty, true);
 
-            fe.Loaded += handler;
+                string context = string.IsNullOrEmpty(fe.Name)
+                    ? fe.GetHashCode().ToString()
+                    : fe.Name;
+
+                ViewModelBinder.Bind(target, d, context);
+            });
         }
     }
 }

@@ -1,39 +1,32 @@
-﻿namespace Caliburn.Micro
-{
+﻿namespace Caliburn.Micro {
     using System;
     using System.Collections.Generic;
     using System.Collections.Specialized;
     using System.Linq;
 
-    public partial class Conductor<T>
-    {
+    public partial class Conductor<T> {
         /// <summary>
-        /// An implementation of <see cref="IConductor"/> that holds on to many items.
+        /// An implementation of <see cref="IConductor"/> that holds on many items.
         /// </summary>
-        public partial class Collection
-        {
+        public partial class Collection {
             /// <summary>
-            /// An implementation of <see cref="IConductor"/> that holds on to many items but only activates one at a time.
+            /// An implementation of <see cref="IConductor"/> that holds on many items but only activates on at a time.
             /// </summary>
-            public class OneActive : ConductorBase<T>
-            {
+            public class OneActive : ConductorBaseWithActiveItem<T> {
                 readonly BindableCollection<T> items = new BindableCollection<T>();
 
                 /// <summary>
                 /// Initializes a new instance of the <see cref="Conductor&lt;T&gt;.Collection.OneActive"/> class.
                 /// </summary>
-                public OneActive()
-                {
-                    items.CollectionChanged += (s, e) =>
-                    {
-                        switch (e.Action)
-                        {
+                public OneActive() {
+                    items.CollectionChanged += (s, e) => {
+                        switch(e.Action) {
                             case NotifyCollectionChangedAction.Add:
                             case NotifyCollectionChangedAction.Replace:
-                                e.NewItems.OfType<IChild<IConductor>>().Apply(x => x.Parent = this);
+                                e.NewItems.OfType<IChild>().Apply(x => x.Parent = this);
                                 break;
                             case NotifyCollectionChangedAction.Reset:
-                                items.OfType<IChild<IConductor>>().Apply(x => x.Parent = this);
+                                items.OfType<IChild>().Apply(x => x.Parent = this);
                                 break;
                         }
                     };
@@ -42,17 +35,15 @@
                 /// <summary>
                 /// Gets the items that are currently being conducted.
                 /// </summary>
-                public IObservableCollection<T> Items
-                {
+                public IObservableCollection<T> Items {
                     get { return items; }
                 }
 
                 /// <summary>
-                /// Gets all the items currently being conducted.
+                /// Gets the children.
                 /// </summary>
-                /// <returns></returns>
-                protected override IEnumerable<T> GetConductedItems()
-                {
+                /// <returns>The collection of children.</returns>
+                public override IEnumerable<T> GetChildren() {
                     return items;
                 }
 
@@ -60,11 +51,12 @@
                 /// Activates the specified item.
                 /// </summary>
                 /// <param name="item">The item to activate.</param>
-                public override void ActivateItem(T item)
-                {
-                    if (item != null && item.Equals(ActiveItem))
-                    {
-                        OnActivationProcessed(item, true);
+                public override void ActivateItem(T item) {
+                    if(item != null && item.Equals(ActiveItem)) {
+                        if (IsActive) {
+                            ScreenExtensions.TryActivate(item);
+                            OnActivationProcessed(item, true);
+                        }
                         return;
                     }
 
@@ -72,36 +64,32 @@
                 }
 
                 /// <summary>
-                /// Closes the specified item.
+                /// Deactivates the specified item.
                 /// </summary>
                 /// <param name="item">The item to close.</param>
-                public override void CloseItem(T item)
-                {
-                    if (item == null)
+                /// <param name="close">Indicates whether or not to close the item after deactivating it.</param>
+                public override void DeactivateItem(T item, bool close) {
+                    if(item == null)
                         return;
 
-                    CloseStrategy.Execute(new[] { item }, (canClose, closable) =>
-                    {
-                        if (canClose)
-                            CloseItemCore(item);
-                    });
+                    if(!close)
+                        ScreenExtensions.TryDeactivate(item, false);
+                    else {
+                        CloseStrategy.Execute(new[] { item }, (canClose, closable) => {
+                            if(canClose)
+                                CloseItemCore(item);
+                        });
+                    }
                 }
 
-                void CloseItemCore(T item)
-                {
-                    if (item.Equals(ActiveItem))
-                    {
+                void CloseItemCore(T item) {
+                    if(item.Equals(ActiveItem)) {
                         var index = items.IndexOf(item);
-                        var next = DetermineNextItemToActivate(index);
+                        var next = DetermineNextItemToActivate(items, index);
 
                         ChangeActiveItem(next, true);
                     }
-                    else
-                    {
-                        var deactivator = item as IDeactivate;
-                        if (deactivator != null)
-                            deactivator.Deactivate(true);
-                    }
+                    else ScreenExtensions.TryDeactivate(item, true);
 
                     items.Remove(item);
                 }
@@ -109,28 +97,49 @@
                 /// <summary>
                 /// Determines the next item to activate based on the last active index.
                 /// </summary>
+                /// <param name="list">The list of possible active items.</param>
                 /// <param name="lastIndex">The index of the last active item.</param>
                 /// <returns>The next item to activate.</returns>
                 /// <remarks>Called after an active item is closed.</remarks>
-                protected virtual T DetermineNextItemToActivate(int lastIndex)
-                {
+                protected virtual T DetermineNextItemToActivate(IList<T> list, int lastIndex) {
                     var toRemoveAt = lastIndex - 1;
 
-                    if (toRemoveAt == -1 && items.Count > 1)
-                        return items[1];
-                    if (toRemoveAt > -1 && toRemoveAt < items.Count - 1)
-                        return items[toRemoveAt];
+                    if(toRemoveAt == -1 && list.Count > 1)
+                        return list[1];
+                    if(toRemoveAt > -1 && toRemoveAt < list.Count - 1)
+                        return list[toRemoveAt];
                     return default(T);
                 }
 
                 /// <summary>
                 /// Called to check whether or not this instance can close.
                 /// </summary>
-                /// <param name="callback">The implementer calls this action with the result of the close check.</param>
-                public override void CanClose(Action<bool> callback)
-                {
+                /// <param name="callback">The implementor calls this action with the result of the close check.</param>
+                public override void CanClose(Action<bool> callback) {
                     CloseStrategy.Execute(items, (canClose, closable) => {
-                        closable.Apply(CloseItemCore);
+                        if(!canClose && closable.Any()) {
+                            if(closable.Contains(ActiveItem)) {
+                                var list = items.ToList();
+                                var next = ActiveItem;
+                                do {
+                                    var previous = next;
+                                    next = DetermineNextItemToActivate(list, list.IndexOf(previous));
+                                    list.Remove(previous);
+                                } while(closable.Contains(next));
+
+                                var previousActive = ActiveItem;
+                                ChangeActiveItem(next, true);
+                                items.Remove(previousActive);
+
+                                var stillToClose = closable.ToList();
+                                stillToClose.Remove(previousActive);
+                                closable = stillToClose;
+                            }
+
+                            closable.OfType<IDeactivate>().Apply(x => x.Deactivate(true));
+                            items.RemoveRange(closable);
+                        }
+
                         callback(canClose);
                     });
                 }
@@ -138,27 +147,20 @@
                 /// <summary>
                 /// Called when activating.
                 /// </summary>
-                protected override void OnActivate()
-                {
-                    var activator = ActiveItem as IActivate;
-                    if (activator != null)
-                        activator.Activate();
+                protected override void OnActivate() {
+                    ScreenExtensions.TryActivate(ActiveItem);
                 }
 
                 /// <summary>
                 /// Called when deactivating.
                 /// </summary>
-                /// <param name="close">Indicates whether this instance will be closed.</param>
-                protected override void OnDeactivate(bool close)
-                {
-                    if (close)
+                /// <param name="close">Inidicates whether this instance will be closed.</param>
+                protected override void OnDeactivate(bool close) {
+                    if (close) {
                         items.OfType<IDeactivate>().Apply(x => x.Deactivate(true));
-                    else
-                    {
-                        var deactivator = ActiveItem as IDeactivate;
-                        if (deactivator != null)
-                            deactivator.Deactivate(false);
+                        items.Clear();
                     }
+                    else ScreenExtensions.TryDeactivate(ActiveItem, false);
                 }
 
                 /// <summary>
@@ -166,15 +168,13 @@
                 /// </summary>
                 /// <param name="newItem"></param>
                 /// <returns>The item to be activated.</returns>
-                protected override T EnsureItem(T newItem)
-                {
-                    if (newItem == null)
-                        newItem = DetermineNextItemToActivate(ActiveItem != null ? items.IndexOf(ActiveItem) : 0);
-                    else
-                    {
+                protected override T EnsureItem(T newItem) {
+                    if(newItem == null)
+                        newItem = DetermineNextItemToActivate(items, ActiveItem != null ? items.IndexOf(ActiveItem) : 0);
+                    else {
                         var index = items.IndexOf(newItem);
 
-                        if (index == -1)
+                        if(index == -1)
                             items.Add(newItem);
                         else newItem = items[index];
                     }

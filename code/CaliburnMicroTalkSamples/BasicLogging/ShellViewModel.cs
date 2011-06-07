@@ -5,11 +5,12 @@ namespace BasicLogging
 {
     public class ShellViewModel : Screen
     {
+        static readonly ILog Log = LogManager.GetLog(typeof(ShellViewModel));
+
         public string NotOnTheView { get; set; }
 
         public void LogAWarning()
         {
-            // Screen includes a protected static readonly Log field
             Log.Warn("Barabarians are at the gate!");
         }
 

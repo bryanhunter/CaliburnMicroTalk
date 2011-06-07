@@ -1,0 +1,22 @@
+public void DoStuff()
+{
+	....
+
+	if (someQuestion)
+	{
+		return;
+	}
+
+	if (someOtherQuestion)
+	{
+		return;
+	}
+
+	Action<Result> whenCompleted = (result) => 
+	{
+		(blah, blah, ...)
+	};
+
+	Async(doXyz(), whenCompleted );
+
+}
